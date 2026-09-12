@@ -540,7 +540,10 @@ mod tests {
             .unwrap();
         let target = app.path().join(".agents/skills/review.md");
         assert_eq!(record.level.as_deref(), Some("project"));
-        assert_eq!(record.path, target.to_string_lossy());
+        assert_eq!(
+            crate::workspace::simple_canonicalize(Path::new(&record.path)).unwrap(),
+            crate::workspace::simple_canonicalize(&target).unwrap()
+        );
         assert_eq!(fs::read_to_string(target).unwrap(), raw);
         assert!(source.is_file());
     }

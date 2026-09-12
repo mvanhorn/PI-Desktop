@@ -4,7 +4,7 @@ use std::path::{Component, Path, PathBuf};
 /// Canonicalize a path, stripping the Windows extended-length prefix (`\\?\`)
 /// when the result is a simple drive-letter path (e.g. `C:\...`). This keeps
 /// paths compatible with shell APIs (`ShellExecuteW`) that reject `\\?\`.
-fn simple_canonicalize(path: &Path) -> std::io::Result<PathBuf> {
+pub(crate) fn simple_canonicalize(path: &Path) -> std::io::Result<PathBuf> {
     let canonical = path.canonicalize()?;
     #[cfg(windows)]
     {
@@ -290,6 +290,41 @@ mod tests {
     use std::fs;
     use tempfile::tempdir;
 
+    #[cfg(windows)]
+    #[test]
+    fn simple_canonicalize_returns_a_plain_drive_prefix() {
+        use std::path::Prefix;
+
+        let dir = tempdir().unwrap();
+        let canonical = simple_canonicalize(dir.path()).unwrap();
+        assert!(matches!(
+            canonical.components().next(),
+            Some(Component::Prefix(prefix)) if matches!(prefix.kind(), Prefix::Disk(_))
+        ));
+        assert!(canonical.is_dir());
+        assert_eq!(
+            canonical.canonicalize().unwrap(),
+            dir.path().canonicalize().unwrap()
+        );
+    }
+
+    #[cfg(not(windows))]
+    #[test]
+    fn simple_canonicalize_matches_standard_canonicalization() {
+        let dir = tempdir().unwrap();
+        assert_eq!(
+            simple_canonicalize(dir.path()).unwrap(),
+            dir.path().canonicalize().unwrap()
+        );
+    }
+
+    #[test]
+    fn simple_canonicalize_rejects_missing_paths() {
+        let dir = tempdir().unwrap();
+        let error = simple_canonicalize(&dir.path().join("missing")).unwrap_err();
+        assert_eq!(error.kind(), std::io::ErrorKind::NotFound);
+    }
+
     #[test]
     fn blocks_escape() {
         let dir = tempdir().unwrap();
@@ -323,7 +358,7 @@ mod tests {
         let dir = tempdir().unwrap();
         let root = dir.path();
         let p = resolve_in_workspace(root, "newdir/sub/file.txt").unwrap();
-        assert!(p.starts_with(root.canonicalize().unwrap()));
+        assert!(p.starts_with(simple_canonicalize(root).unwrap()));
         assert!(p.ends_with("newdir/sub/file.txt"));
     }
 
@@ -391,7 +426,7 @@ mod tests {
         let scratch = tempdir().unwrap();
         let (p, root) = resolve_tool_path(ws.path(), Some(scratch.path()), "notes.txt").unwrap();
         assert_eq!(root, ToolRoot::Workspace);
-        assert!(p.starts_with(ws.path().canonicalize().unwrap()));
+        assert!(p.starts_with(simple_canonicalize(ws.path()).unwrap()));
     }
 
     #[test]
@@ -402,7 +437,7 @@ mod tests {
         let (p, root) =
             resolve_tool_path(ws.path(), Some(scratch.path()), input.to_str().unwrap()).unwrap();
         assert_eq!(root, ToolRoot::Scratch);
-        assert!(p.starts_with(scratch.path().canonicalize().unwrap()));
+        assert!(p.starts_with(simple_canonicalize(scratch.path()).unwrap()));
     }
 
     #[test]
@@ -447,7 +482,7 @@ mod tests {
             resolve_tool_path_with_external(ws.path(), None, input.to_str().unwrap(), true)
                 .unwrap();
         assert_eq!(root, ToolRoot::External);
-        assert_eq!(resolved, input.canonicalize().unwrap());
+        assert_eq!(resolved, simple_canonicalize(&input).unwrap());
     }
 
     #[test]
@@ -465,7 +500,7 @@ mod tests {
         );
         let (resolved, root) = resolve_tool_path_with_external(&ws, None, input, true).unwrap();
         assert_eq!(root, ToolRoot::External);
-        assert_eq!(resolved, outside.canonicalize().unwrap());
+        assert_eq!(resolved, simple_canonicalize(&outside).unwrap());
     }
 
     #[test]
